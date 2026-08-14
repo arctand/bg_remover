@@ -27,6 +27,7 @@ class QCResult:
     edge_right_ratio: float
     translucent_ratio: float
     hole_ratio: float
+    cropped_source_signal: bool = False
     review_reasons: list[str] = field(default_factory=list)
     review_details: list[str] = field(default_factory=list)
 
@@ -34,7 +35,7 @@ class QCResult:
         data = asdict(self)
         data["review_reason"] = ";".join(self.review_reasons)
         data["review_details"] = "; ".join(self.review_details)
-        data.pop("review_reasons"); data.pop("review_details")
+        data.pop("review_reasons")
         return data
 
     @property
@@ -86,20 +87,14 @@ def analyze_mask(alpha: np.ndarray, cfg: QCConfig, edge: EdgeMetrics | None = No
     bottom_crop = touches[1] and edge_areas[1] >= cfg.edge_min_area_ratio and cfg.edge_min_span_ratio <= bottom_span <= cfg.cropped_bottom_span_ratio
     left_crop = touches[2] and edge_areas[2] >= cfg.edge_min_area_ratio and spans_for_crop(fg[:, :band], 1) >= cfg.cropped_side_span_ratio
     right_crop = touches[3] and edge_areas[3] >= cfg.edge_min_area_ratio and spans_for_crop(fg[:, -band:], 1) >= cfg.cropped_side_span_ratio
-    if top_crop or bottom_crop or left_crop or right_crop:
-        reasons.append("cropped_source"); details.append("foreground has sustained narrow contact with source frame")
-    if edge and edge.edge_pixels:
-        if edge.correction_p95 > cfg.halo_correction_p95 and edge.clipped_ratio > cfg.halo_clipped_ratio:
-            reasons.append("edge_halo"); details.append(f"strong edge color correction p95={edge.correction_p95:.3f}, clipped={edge.clipped_ratio:.3f}")
-    if human:
-        if human.missing_body_part:
-            reasons.append("missing_body_part"); details.append(f"{human.missing_count}/{human.person_count} detected people insufficiently covered by alpha")
-        if human.multiple_people_uncertain:
-            reasons.append("multiple_people_uncertain"); details.append("one or more smaller people have marginal alpha coverage")
+    cropped_source_signal = top_crop or bottom_crop or left_crop or right_crop
+    # Frame contact and RGB correction magnitude are telemetry, not independent
+    # evidence of a bad cutout. Semantic escalation is handled after fast QC.
     # Stable order without duplicate reason codes.
     reasons = list(dict.fromkeys(reasons))
     return QCResult(w, h, area, ratio, meaningful, *touches, *edge_areas,
-                    float(translucent), float(hole_ratio), reasons, details)
+                    float(translucent), float(hole_ratio), cropped_source_signal,
+                    reasons, details)
 
 
 def spans_for_crop(strip: np.ndarray, collapse_axis: int) -> float:

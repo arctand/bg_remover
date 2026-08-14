@@ -9,16 +9,13 @@ import yaml
 
 @dataclass
 class ModelConfig:
-    primary: str = "ZhengPeng7/BiRefNet_HR-matting"
-    secondary: str = "ZhengPeng7/BiRefNet_dynamic-matting"
-    primary_revision: str = "5d6b6f8adcb5b417c871b1d84ceaae9871355b7f"
-    secondary_revision: str = "074df545be87034e74a96bf71566ecbbc4c15f0a"
-    image_size: int = 2048
+    primary: str = "ZhengPeng7/BiRefNet-portrait"
+    fallback: str = "ZhengPeng7/BiRefNet_HR-matting"
+    primary_revision: str = "ecdeb6240ef23557dbd48ff27c59c1a88cbcb755"
+    fallback_revision: str = "5d6b6f8adcb5b417c871b1d84ceaae9871355b7f"
+    image_size: int = 1024
+    fallback_image_size: int = 2048
     precision: str = "fp16"
-    secondary_enabled: bool = False
-    secondary_review_only: bool = True
-    disagreement_iou: float = 0.86
-    disagreement_alpha: float = 0.12
 
 
 @dataclass
@@ -46,7 +43,8 @@ class QCConfig:
 
 @dataclass
 class EdgeConfig:
-    enabled: bool = True
+    # Legacy diagnostic refiner. Production uses ForegroundConfig below.
+    enabled: bool = False
     alpha_low: int = 8
     alpha_high: int = 247
     background_inpaint_radius: int = 7
@@ -59,6 +57,23 @@ class VerificationConfig:
     enabled: bool = True
     model: str = "ssdlite320_mobilenet_v3_large"
     run_on_all: bool = True
+    sam_enabled: bool = True
+    sam_model: str = "facebook/sam2.1-hiera-small"
+    sam_revision: str = "ee5bba1d82bb8749febdf90f45e84b687142ba03"
+    sam_prompt_confidence: float = 0.80
+    sam_mask_confidence: float = 0.80
+    sam_alpha_threshold: int = 24
+    sam_trigger_box_coverage: float = 0.45
+    sam_trigger_multiple_coverage: float = 0.60
+    sam_min_person_recall: float = 0.82
+    sam_min_missing_box_ratio: float = 0.02
+    sam_boundary_tolerance_ratio: float = 0.006
+
+
+@dataclass
+class ForegroundConfig:
+    method: str = "pymatting_ml"
+    enabled: bool = True
 
 
 @dataclass
@@ -75,6 +90,7 @@ class AppConfig:
     qc: QCConfig = field(default_factory=QCConfig)
     preview: PreviewConfig = field(default_factory=PreviewConfig)
     edge: EdgeConfig = field(default_factory=EdgeConfig)
+    foreground: ForegroundConfig = field(default_factory=ForegroundConfig)
     verification: VerificationConfig = field(default_factory=VerificationConfig)
     extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".webp")
 
@@ -95,6 +111,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     _merge(cfg.qc, raw.get("qc", {}))
     _merge(cfg.preview, raw.get("preview", {}))
     _merge(cfg.edge, raw.get("edge", {}))
+    _merge(cfg.foreground, raw.get("foreground", {}))
     _merge(cfg.verification, raw.get("verification", {}))
     if "extensions" in raw:
         cfg.extensions = tuple(e.lower() for e in raw["extensions"])

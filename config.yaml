@@ -1,14 +1,11 @@
 model:
-  primary: ZhengPeng7/BiRefNet_HR-matting
-  secondary: ZhengPeng7/BiRefNet_dynamic-matting
-  primary_revision: 5d6b6f8adcb5b417c871b1d84ceaae9871355b7f
-  secondary_revision: 074df545be87034e74a96bf71566ecbbc4c15f0a
-  image_size: 2048
+  primary: ZhengPeng7/BiRefNet-portrait
+  fallback: ZhengPeng7/BiRefNet_HR-matting
+  primary_revision: ecdeb6240ef23557dbd48ff27c59c1a88cbcb755
+  fallback_revision: 5d6b6f8adcb5b417c871b1d84ceaae9871355b7f
+  image_size: 1024
+  fallback_image_size: 2048
   precision: fp16
-  secondary_enabled: false
-  secondary_review_only: true
-  disagreement_iou: 0.86
-  disagreement_alpha: 0.12
 qc:
   foreground_threshold: 24
   solid_threshold: 224
@@ -30,16 +27,30 @@ qc:
   cropped_top_span_ratio: 0.12
   cropped_bottom_span_ratio: 0.28
 edge:
-  enabled: true
+  enabled: false
   alpha_low: 8
   alpha_high: 247
   background_inpaint_radius: 7
   correction_strength: 0.85
   low_alpha_protection: 0.12
+foreground:
+  method: pymatting_ml
+  enabled: true
 verification:
   enabled: true
   model: ssdlite320_mobilenet_v3_large
   run_on_all: true
+  sam_enabled: true
+  sam_model: facebook/sam2.1-hiera-small
+  sam_revision: ee5bba1d82bb8749febdf90f45e84b687142ba03
+  sam_prompt_confidence: 0.80
+  sam_mask_confidence: 0.80
+  sam_alpha_threshold: 24
+  sam_trigger_box_coverage: 0.45
+  sam_trigger_multiple_coverage: 0.60
+  sam_min_person_recall: 0.82
+  sam_min_missing_box_ratio: 0.02
+  sam_boundary_tolerance_ratio: 0.006
 preview:
   width: 1000
   panel_height: 320

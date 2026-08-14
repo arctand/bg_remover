@@ -14,11 +14,13 @@ python -m pip install torch==2.11.0 torchvision==0.26.0 --index-url https://down
 if errorlevel 1 goto :fail
 python -m pip install -r requirements.txt
 if errorlevel 1 goto :fail
-python -c "from transformers import AutoModelForImageSegmentation as A; A.from_pretrained('ZhengPeng7/BiRefNet_HR-matting', revision='5d6b6f8adcb5b417c871b1d84ceaae9871355b7f', trust_remote_code=True); print('Primary model downloaded')"
+python -c "from transformers import AutoModelForImageSegmentation as A; A.from_pretrained('ZhengPeng7/BiRefNet-portrait', revision='ecdeb6240ef23557dbd48ff27c59c1a88cbcb755', trust_remote_code=True); print('Portrait model downloaded')"
 if errorlevel 1 goto :fail
-python smoke_test.py
+python -c "from huggingface_hub import snapshot_download; snapshot_download('facebook/sam2.1-hiera-small', revision='ee5bba1d82bb8749febdf90f45e84b687142ba03'); print('SAM 2.1 verifier downloaded')"
 if errorlevel 1 goto :fail
 python -c "from torchvision.models.detection import SSDLite320_MobileNet_V3_Large_Weights as W; W.DEFAULT.get_state_dict(progress=True); print('Person QC model downloaded')"
+if errorlevel 1 goto :fail
+python smoke_test.py
 if errorlevel 1 goto :fail
 echo.
 echo Setup completed successfully. Start with "Background Remover.bat".

@@ -37,7 +37,9 @@ class BiRefNetBackend:
     def __init__(self, config: ModelConfig, model_id: str | None = None, allow_cpu: bool = False):
         self.config = config
         self.model_id = model_id or config.primary
-        self.revision = config.secondary_revision if self.model_id == config.secondary else config.primary_revision
+        is_fallback = self.model_id == config.fallback
+        self.revision = config.fallback_revision if is_fallback else config.primary_revision
+        self.image_size = config.fallback_image_size if is_fallback else config.image_size
         self.allow_cpu = allow_cpu
         self.model = None
         self.info = detect_device(config.precision)
@@ -61,7 +63,7 @@ class BiRefNetBackend:
         from torchvision.transforms import functional as F
         if self.model is None:
             self.load()
-        tensor = F.pil_to_tensor(image.resize((self.config.image_size,) * 2, Image.Resampling.LANCZOS)).float() / 255
+        tensor = F.pil_to_tensor(image.resize((self.image_size,) * 2, Image.Resampling.LANCZOS)).float() / 255
         tensor = F.normalize(tensor, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]).unsqueeze(0)
         tensor = tensor.to(self.device, dtype=self.dtype)
         amp = torch.autocast("cuda", dtype=torch.float16) if self.dtype == torch.float16 else nullcontext()
@@ -78,6 +80,12 @@ class BiRefNetBackend:
             if torch.cuda.is_available(): torch.cuda.empty_cache()
         except Exception:
             pass
+
+    def unload(self):
+        model = self.model
+        self.model = None
+        del model
+        self.clear_cache()
 
     def smoke_test(self) -> dict:
         image = Image.new("RGB", (256, 256), "white")

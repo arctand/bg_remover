@@ -9,33 +9,38 @@ def test_center_mask_is_ready():
     result=analyze_mask(a,QCConfig())
     assert not result.needs_review and result.components == 1
 
-def test_sustained_side_contact_marks_cropped_source():
+def test_sustained_side_contact_is_telemetry_only():
     a=np.zeros((100,100),np.uint8); a[20:80,:40]=255
     result=analyze_mask(a,QCConfig())
-    assert result.touch_left and "cropped_source" in result.review_reasons
+    assert result.touch_left and result.cropped_source_signal
+    assert not result.needs_review
 
 def test_wide_bottom_contact_is_not_automatically_cropped():
     a=np.zeros((100,100),np.uint8); a[25:,20:80]=255
     result=analyze_mask(a,QCConfig())
-    assert "cropped_source" not in result.review_reasons
+    assert not result.cropped_source_signal
 
-def test_missing_detected_person_is_never_ready():
+def test_ssdlite_signal_does_not_directly_change_fast_qc_status():
     a=np.zeros((100,100),np.uint8); a[20:80,20:60]=255
     human=HumanVerification(person_count=2,missing_count=1,coverages=[.5,.02],center_coverages=[.7,.01])
     result=analyze_mask(a,QCConfig(),human=human)
-    assert "missing_body_part" in result.review_reasons
+    assert "missing_body_part" not in result.review_reasons
 
-def test_multiple_people_uncertain_reason():
+def test_multiple_people_signal_waits_for_semantic_verifier():
     a=np.zeros((100,100),np.uint8); a[10:90,10:90]=255
     human=HumanVerification(person_count=3,uncertain_count=1)
     result=analyze_mask(a,QCConfig(),human=human)
-    assert "multiple_people_uncertain" in result.review_reasons
+    assert "multiple_people_uncertain" not in result.review_reasons
 
-def test_strong_edge_contamination_is_review():
+def test_rgb_correction_magnitude_is_telemetry_not_review():
     a=np.zeros((100,100),np.uint8); a[20:80,20:80]=255
     edge=EdgeMetrics(.2,.5,.3,500)
-    assert "edge_halo" in analyze_mask(a,QCConfig(),edge=edge).review_reasons
+    assert "edge_halo" not in analyze_mask(a,QCConfig(),edge=edge).review_reasons
 
 def test_similarity():
     a=np.zeros((10,10),np.uint8); b=a.copy()
     assert mask_similarity(a,b)==(0.0,0.0)
+
+def test_review_details_are_exported():
+    result=analyze_mask(np.zeros((20,20),np.uint8),QCConfig())
+    assert result.as_dict()["review_details"]

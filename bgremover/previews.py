@@ -21,10 +21,23 @@ def _composite(rgba: Image.Image, color) -> Image.Image:
 
 
 def make_preview(original: Image.Image, rgba: Image.Image, path: Path, cfg: PreviewConfig):
-    panel_w, panel_h = cfg.width // 4, cfg.panel_height
-    panels = [original.convert("RGB"), _composite(rgba, "white"), _composite(rgba, "#888888"), _composite(rgba, "black")]
-    labels = ["Original", "White", "Gray", "Black"]
-    canvas = Image.new("RGB", (panel_w * 4, panel_h + 32), "#202124")
+    panel_w, panel_h = cfg.width // 5, cfg.panel_height
+    contrast = Image.new("RGB", rgba.size, "#ff00a8")
+    block = max(16, min(rgba.size) // 12)
+    draw_contrast = ImageDraw.Draw(contrast)
+    for y in range(0, rgba.height, block):
+        for x in range(0, rgba.width, block):
+            if (x // block + y // block) % 2:
+                draw_contrast.rectangle((x, y, x + block, y + block), fill="#00d6ff")
+    panels = [
+        original.convert("RGB"),
+        _composite(rgba, "white"),
+        _composite(rgba, "#888888"),
+        _composite(rgba, "black"),
+        Image.alpha_composite(contrast.convert("RGBA"), rgba).convert("RGB"),
+    ]
+    labels = ["Original", "White", "Gray", "Black", "Contrast"]
+    canvas = Image.new("RGB", (panel_w * 5, panel_h + 32), "#202124")
     draw = ImageDraw.Draw(canvas)
     for i, (panel, label) in enumerate(zip(panels, labels)):
         fitted = _fit(panel, (panel_w, panel_h)).convert("RGB")
