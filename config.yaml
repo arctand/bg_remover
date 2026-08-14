@@ -49,6 +49,8 @@ verification:
   sam_trigger_box_coverage: 0.45
   sam_trigger_center_coverage: 0.55
   sam_trigger_multiple_coverage: 0.60
+  sam_prompt_min_relative_area: 0.40
+  sam_prompt_overlap_suppression: 0.50
   sam_min_person_recall: 0.82
   sam_min_missing_box_ratio: 0.02
   sam_boundary_tolerance_ratio: 0.006

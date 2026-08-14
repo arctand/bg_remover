@@ -66,6 +66,8 @@ class VerificationConfig:
     sam_trigger_box_coverage: float = 0.45
     sam_trigger_center_coverage: float = 0.55
     sam_trigger_multiple_coverage: float = 0.60
+    sam_prompt_min_relative_area: float = 0.40
+    sam_prompt_overlap_suppression: float = 0.50
     sam_min_person_recall: float = 0.82
     sam_min_missing_box_ratio: float = 0.02
     sam_boundary_tolerance_ratio: float = 0.006

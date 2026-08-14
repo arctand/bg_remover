@@ -191,6 +191,27 @@ def test_suspicious_case_with_no_checked_sam_prompt_routes_review(tmp_path):
     assert row["status"] == "REVIEW" and "low_confidence" in row["review_reason"]
 
 
+def test_incomplete_sam_keeps_confirmed_disagreement_reason(tmp_path):
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    human = HumanVerification(
+        person_count=2, boxes=[(5, 5, 35, 75), (40, 5, 75, 75)],
+        scores=[0.99, 0.95], coverages=[0.1, 0.1], center_coverages=[0.1, 0.1],
+    )
+    incomplete = SAMVerification(
+        ran=True, prompted_boxes=2, checked_people=1,
+        reasons=["missing_body_part", "human_mask_disagreement"],
+    )
+    out = tmp_path / "out"
+    BatchProcessor(
+        AppConfig(), FakeBackend(), verifier=FakePersonVerifier(human),
+        foreground_refiner=FakeRefiner(), strong_verifier=FakeStrongVerifier(incomplete),
+    ).run(source, out)
+    row = read_completed(out / "report.csv")["x.jpg"]
+    assert row["sam_result"] == "incomplete"
+    assert "low_confidence" in row["review_reason"]
+    assert "missing_body_part" in row["review_reason"]
+
+
 def test_legacy_report_is_reprocessed_by_new_pipeline(tmp_path):
     source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
     out = tmp_path / "out"
@@ -245,3 +266,85 @@ def test_always_on_models_load_once_per_batch(tmp_path):
         strong_verifier=FakeStrongVerifier(),
     ).run(source, tmp_path / "out")
     assert backend.loads == verifier.loads == 1
+
+
+def test_weak_fast_qc_trigger_can_be_cleared_by_complete_sam(tmp_path):
+    class HoleMask(FakeBackend):
+        def predict(self, image):
+            alpha = np.zeros((image.height, image.width), np.uint8)
+            alpha[5:75, 5:75] = 255
+            alpha[25:55, 25:55] = 0
+            return Image.fromarray(alpha)
+
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    human = HumanVerification(
+        person_count=1, boxes=[(5, 5, 75, 75)], scores=[0.99],
+        coverages=[0.75], center_coverages=[0.9],
+    )
+    strong = FakeStrongVerifier()
+    out = tmp_path / "out"
+    summary = BatchProcessor(
+        AppConfig(), HoleMask(), verifier=FakePersonVerifier(human),
+        foreground_refiner=FakeRefiner(), strong_verifier=strong,
+    ).run(source, out)
+    row = read_completed(out / "report.csv")["x.jpg"]
+    assert summary["ready"] == 1 and strong.calls == 1
+    assert row["sam_result"] == "confirmed" and row["review_reason"] == ""
+
+
+def test_hard_qc_cannot_be_cleared_and_does_not_call_sam(tmp_path):
+    class EmptyMask(FakeBackend):
+        def predict(self, image):
+            return Image.fromarray(np.zeros((image.height, image.width), np.uint8))
+
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    human = HumanVerification(
+        person_count=1, boxes=[(5, 5, 75, 75)], scores=[0.99],
+        coverages=[0.0], center_coverages=[0.0],
+    )
+    strong = FakeStrongVerifier()
+    out = tmp_path / "out"
+    BatchProcessor(
+        AppConfig(), EmptyMask(), verifier=FakePersonVerifier(human),
+        foreground_refiner=FakeRefiner(), strong_verifier=strong,
+    ).run(source, out)
+    row = read_completed(out / "report.csv")["x.jpg"]
+    assert row["status"] == "REVIEW" and row["sam_result"] == "hard_review"
+    assert strong.calls == 0
+
+
+def test_sam_exception_keeps_suspicious_result_in_review(tmp_path):
+    class BrokenStrongVerifier:
+        def verify(self, image, alpha, human):
+            raise RuntimeError("synthetic SAM failure")
+
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    human = HumanVerification(
+        person_count=1, boxes=[(5, 5, 75, 75)], scores=[0.99],
+        coverages=[0.1], center_coverages=[0.1],
+    )
+    out = tmp_path / "out"
+    BatchProcessor(
+        AppConfig(), FakeBackend(), verifier=FakePersonVerifier(human),
+        foreground_refiner=FakeRefiner(), strong_verifier=BrokenStrongVerifier(),
+    ).run(source, out)
+    row = read_completed(out / "report.csv")["x.jpg"]
+    assert row["status"] == "REVIEW" and row["sam_result"] == "error"
+    assert "low_confidence" in row["final_review_reasons"]
+
+
+def test_all_significant_people_verified_can_be_ready(tmp_path):
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    human = HumanVerification(
+        person_count=2,
+        boxes=[(5, 5, 35, 75), (40, 5, 75, 75)], scores=[0.99, 0.95],
+        coverages=[0.58, 0.8], center_coverages=[0.7, 0.9],
+    )
+    strong = FakeStrongVerifier(SAMVerification(ran=True, prompted_boxes=2, checked_people=2))
+    out = tmp_path / "out"
+    BatchProcessor(
+        AppConfig(), FakeBackend(), verifier=FakePersonVerifier(human),
+        foreground_refiner=FakeRefiner(), strong_verifier=strong,
+    ).run(source, out)
+    row = read_completed(out / "report.csv")["x.jpg"]
+    assert row["status"] == "READY" and row["sam_result"] == "confirmed"

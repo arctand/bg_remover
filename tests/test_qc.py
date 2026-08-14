@@ -44,3 +44,19 @@ def test_similarity():
 def test_review_details_are_exported():
     result=analyze_mask(np.zeros((20,20),np.uint8),QCConfig())
     assert result.as_dict()["review_details"]
+
+
+def test_large_hole_is_verification_trigger_not_hard_review():
+    alpha = np.zeros((100, 100), np.uint8)
+    alpha[10:90, 10:90] = 255
+    alpha[30:70, 30:70] = 0
+    result = analyze_mask(alpha, QCConfig())
+    assert "large_internal_holes" in result.verification_triggers
+    assert not result.hard_reasons
+
+
+def test_almost_empty_mask_remains_hard_review():
+    alpha = np.zeros((100, 100), np.uint8)
+    alpha[45:50, 45:50] = 255
+    result = analyze_mask(alpha, QCConfig())
+    assert "mask_issue" in result.hard_reasons

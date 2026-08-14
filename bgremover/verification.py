@@ -28,12 +28,14 @@ class HumanVerification:
 class SAMVerification:
     ran: bool = False
     prompted_boxes: int = 0
+    filtered_boxes: int = 0
     checked_people: int = 0
     min_recall: float | None = None
     min_iou: float | None = None
     missing_count: int = 0
     reasons: list[str] = field(default_factory=list)
     details: list[str] = field(default_factory=list)
+    filter_details: list[str] = field(default_factory=list)
 
 
 class TorchvisionPersonVerifier:
@@ -88,26 +90,150 @@ class TorchvisionPersonVerifier:
         return result
 
 
+def _box_area(box: tuple[int, int, int, int]) -> int:
+    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+
+
+def _union_overlap_ratio(
+    box: tuple[int, int, int, int], others: list[tuple[int, int, int, int]]
+) -> float:
+    """Return how much of ``box`` is covered by the union of other boxes."""
+
+    x1, y1, x2, y2 = box
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    intersections: list[tuple[int, int, int, int]] = []
+    for other in others:
+        ox1, oy1 = max(x1, other[0]), max(y1, other[1])
+        ox2, oy2 = min(x2, other[2]), min(y2, other[3])
+        if ox2 > ox1 and oy2 > oy1:
+            intersections.append((ox1, oy1, ox2, oy2))
+    if not intersections:
+        return 0.0
+
+    # Exact rectangle-union area without allocating an image-sized bitmap.
+    # This keeps advisory prompt filtering safe for very high-resolution photos.
+    x_edges = sorted({value for rect in intersections for value in (rect[0], rect[2])})
+    union_area = 0
+    for left, right in zip(x_edges, x_edges[1:]):
+        intervals = sorted(
+            (top, bottom)
+            for rx1, top, rx2, bottom in intersections
+            if rx1 < right and rx2 > left
+        )
+        covered_y = 0
+        if intervals:
+            start, end = intervals[0]
+            for top, bottom in intervals[1:]:
+                if top <= end:
+                    end = max(end, bottom)
+                else:
+                    covered_y += end - start
+                    start, end = top, bottom
+            covered_y += end - start
+        union_area += (right - left) * covered_y
+    return float(union_area / _box_area(box))
+
+
+def select_sam_prompt_indices(
+    human: HumanVerification, config: VerificationConfig
+) -> tuple[list[int], list[str]]:
+    """Select person boxes worth strong verification, without changing alpha.
+
+    SSDLite often sees small background people or a box spanning two already
+    supported foreground people. Those boxes are useful telemetry but poor SAM
+    prompts. Large, supported, and partially missing significant boxes remain.
+    """
+
+    if not human.boxes:
+        # Unit-level/advisory results may not carry geometry. Treat every reported
+        # person as relevant so tests and non-torch verifiers stay conservative.
+        return list(range(human.person_count)), []
+
+    areas = [_box_area(box) for box in human.boxes]
+    max_area = max(areas, default=0)
+    supported_indices = [
+        index
+        for index in range(len(human.boxes))
+        if (
+            index < len(human.coverages)
+            and index < len(human.center_coverages)
+            and (
+                human.coverages[index] >= config.sam_trigger_box_coverage
+                or human.center_coverages[index] >= config.sam_trigger_center_coverage
+            )
+        )
+    ]
+    selected: list[int] = []
+    filtered: list[str] = []
+    for index, box in enumerate(human.boxes):
+        score = human.scores[index] if index < len(human.scores) else 1.0
+        coverage = human.coverages[index] if index < len(human.coverages) else 0.0
+        center = human.center_coverages[index] if index < len(human.center_coverages) else 0.0
+        if score < config.sam_prompt_confidence:
+            filtered.append(f"person {index + 1}: detector confidence {score:.3f} below prompt threshold")
+            continue
+
+        relative_area = areas[index] / max(1, max_area)
+        is_supported = (
+            coverage >= config.sam_trigger_box_coverage
+            or center >= config.sam_trigger_center_coverage
+        )
+        overlap = _union_overlap_ratio(
+            box,
+            [human.boxes[item] for item in supported_indices if item != index],
+        )
+        overlap_duplicate = (
+            overlap >= config.sam_prompt_overlap_suppression
+            and coverage < config.sam_trigger_box_coverage * 0.55
+        )
+        partial_missing = (
+            relative_area + 1e-9 >= config.sam_prompt_min_relative_area * 0.75
+            and coverage >= config.sam_trigger_box_coverage * 0.20
+            and center < config.sam_trigger_center_coverage * 0.27
+        )
+        significant = relative_area >= config.sam_prompt_min_relative_area
+
+        if is_supported or (not overlap_duplicate and (partial_missing or significant)):
+            selected.append(index)
+        else:
+            filtered.append(
+                f"person {index + 1}: low-value prompt "
+                f"(relative area={relative_area:.3f}, overlap={overlap:.3f}, coverage={coverage:.3f})"
+            )
+    return selected, filtered
+
+
+def human_verification_triggers(
+    human: HumanVerification, config: VerificationConfig
+) -> list[str]:
+    indices, _ = select_sam_prompt_indices(human, config)
+    triggers: list[str] = []
+    for index in indices:
+        coverage = human.coverages[index] if index < len(human.coverages) else 0.0
+        center = human.center_coverages[index] if index < len(human.center_coverages) else 0.0
+        if coverage < config.sam_trigger_box_coverage:
+            triggers.append("person_box_coverage")
+        if center < config.sam_trigger_center_coverage:
+            triggers.append("person_center_coverage")
+    if len(indices) > 1 and any(
+        human.coverages[index] < config.sam_trigger_multiple_coverage
+        for index in indices if index < len(human.coverages)
+    ):
+        triggers.append("multiple_people_coverage")
+    return list(dict.fromkeys(triggers))
+
+
 def should_run_sam(
-    qc_reasons: list[str], human: HumanVerification, config: VerificationConfig
+    verification_triggers: list[str], human: HumanVerification, config: VerificationConfig
 ) -> bool:
-    """Escalate only strong mask/semantic signals; frame contact alone is excluded."""
+    """Run SAM only when a weak trigger has at least one relevant person prompt."""
 
     if not config.sam_enabled or human.person_detector_zero:
         return False
-    if any(reason in {"mask_issue", "low_confidence"} for reason in qc_reasons):
-        return True
-    if human.missing_count > 0:
-        return True
-    if any(value < config.sam_trigger_box_coverage for value in human.coverages):
-        return True
-    if any(value < config.sam_trigger_center_coverage for value in human.center_coverages):
-        return True
-    if human.person_count > 1 and any(
-        value < config.sam_trigger_multiple_coverage for value in human.coverages
-    ):
-        return True
-    return False
+    indices, _ = select_sam_prompt_indices(human, config)
+    triggers = list(verification_triggers) + human_verification_triggers(human, config)
+    return bool(indices and triggers)
 
 
 class SAM21PersonVerifier:
@@ -134,18 +260,22 @@ class SAM21PersonVerifier:
     def verify(
         self, image: Image.Image, alpha: np.ndarray, human: HumanVerification
     ) -> SAMVerification:
+        prompt_indices, filter_details = select_sam_prompt_indices(human, self.config)
         prompts = [
-            (box, score)
-            for box, score in zip(human.boxes, human.scores)
-            if score >= self.config.sam_prompt_confidence
+            (human.boxes[index], human.scores[index], index)
+            for index in prompt_indices
         ]
-        result = SAMVerification(ran=bool(prompts), prompted_boxes=len(prompts))
+        result = SAMVerification(
+            ran=bool(prompts), prompted_boxes=len(prompts),
+            filtered_boxes=max(0, len(human.boxes) - len(prompts)),
+            filter_details=filter_details,
+        )
         if not prompts:
             return result
         if self.predictor is None:
             self.load()
 
-        boxes = np.asarray([box for box, _ in prompts], dtype=np.float32)
+        boxes = np.asarray([box for box, _, _ in prompts], dtype=np.float32)
         self.predictor.set_image(image.convert("RGB"))
         masks, scores, _ = self.predictor.predict(box=boxes, multimask_output=False)
         masks = np.asarray(masks, dtype=bool)
@@ -156,8 +286,8 @@ class SAM21PersonVerifier:
         recalls: list[float] = []
         ious: list[float] = []
 
-        for index, ((box, _), sam_mask) in enumerate(zip(prompts, masks)):
-            sam_score = float(scores[index]) if index < len(scores) else 0.0
+        for prompt_index, ((box, _, person_index), sam_mask) in enumerate(zip(prompts, masks)):
+            sam_score = float(scores[prompt_index]) if prompt_index < len(scores) else 0.0
             if sam_score < self.config.sam_mask_confidence:
                 continue
             x1, y1, x2, y2 = box
@@ -185,7 +315,8 @@ class SAM21PersonVerifier:
             ):
                 result.missing_count += 1
                 result.details.append(
-                    f"person {index + 1}: SAM recall={recall:.3f}, missing box ratio={missing_box_ratio:.3f}"
+                    f"person {person_index + 1}: SAM recall={recall:.3f}, "
+                    f"missing box ratio={missing_box_ratio:.3f}"
                 )
 
         result.min_recall = min(recalls) if recalls else None

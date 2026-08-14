@@ -9,11 +9,15 @@ from uuid import uuid4
 
 REPORT_FIELDS = [
     "source_file", "filename", "output_file", "width", "height", "status", "processing_time",
-    "device", "precision", "foreground_ratio", "touch_top", "touch_bottom",
-    "touch_left", "touch_right", "cropped_source_signal", "review_reason", "review_details",
+    "device", "precision", "foreground_ratio", "components", "hole_ratio", "translucent_ratio",
+    "touch_top", "touch_bottom", "touch_left", "touch_right", "cropped_source_signal",
+    "fast_qc_hard_reasons", "fast_qc_hard_details", "verification_triggers",
+    "verification_trigger_details", "telemetry_signals", "final_review_reasons",
+    "review_reason", "review_details",
     "person_count", "person_detector_zero", "person_box_coverage_min", "sam_requested",
-    "sam_ran", "sam_prompted_boxes", "sam_checked_people", "sam_min_recall", "sam_min_iou",
-    "sam_error", "foreground_refinement", "pipeline_fingerprint", "error",
+    "sam_ran", "sam_prompted_boxes", "sam_filtered_boxes", "sam_checked_people",
+    "sam_min_recall", "sam_min_iou", "sam_filter_details", "sam_result", "sam_error",
+    "foreground_refinement", "pipeline_fingerprint", "error",
 ]
 
 

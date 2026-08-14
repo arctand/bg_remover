@@ -28,18 +28,40 @@ class QCResult:
     translucent_ratio: float
     hole_ratio: float
     cropped_source_signal: bool = False
-    review_reasons: list[str] = field(default_factory=list)
-    review_details: list[str] = field(default_factory=list)
+    hard_reasons: list[str] = field(default_factory=list)
+    hard_details: list[str] = field(default_factory=list)
+    verification_triggers: list[str] = field(default_factory=list)
+    trigger_details: list[str] = field(default_factory=list)
+    telemetry_signals: list[str] = field(default_factory=list)
 
     def as_dict(self):
         data = asdict(self)
-        data["review_reason"] = ";".join(self.review_reasons)
-        data["review_details"] = "; ".join(self.review_details)
-        data.pop("review_reasons")
+        data["fast_qc_hard_reasons"] = ";".join(self.hard_reasons)
+        data["fast_qc_hard_details"] = "; ".join(self.hard_details)
+        data["verification_triggers"] = ";".join(self.verification_triggers)
+        data["verification_trigger_details"] = "; ".join(self.trigger_details)
+        data["telemetry_signals"] = ";".join(self.telemetry_signals)
+        # Legacy aliases remain for consumers that read fast-QC results directly.
+        data["review_reason"] = ";".join(self.hard_reasons)
+        data["review_details"] = "; ".join(self.hard_details)
+        for key in (
+            "hard_reasons", "hard_details", "verification_triggers",
+            "trigger_details", "telemetry_signals",
+        ):
+            data.pop(key)
         return data
 
     @property
-    def needs_review(self): return bool(self.review_reasons)
+    def review_reasons(self):
+        """Compatibility view: only independently decisive fast-QC reasons."""
+        return self.hard_reasons
+
+    @property
+    def review_details(self):
+        return self.hard_details
+
+    @property
+    def needs_review(self): return bool(self.hard_reasons)
 
 
 def _edge_metrics(fg: np.ndarray, band: int, min_span: float):
@@ -75,12 +97,25 @@ def analyze_mask(alpha: np.ndarray, cfg: QCConfig, edge: EdgeMetrics | None = No
                 holes += abs(cv2.contourArea(contour))
     hole_ratio = holes / max(1, area)
     translucent = ((alpha > cfg.foreground_threshold) & (alpha < cfg.solid_threshold)).sum() / max(1, area)
-    reasons: list[str] = []; details: list[str] = []
-    if ratio < cfg.min_foreground_ratio: reasons.append("mask_issue"); details.append("almost empty foreground mask")
-    if ratio > cfg.max_foreground_ratio: reasons.append("mask_issue"); details.append("foreground covers almost the entire image")
-    if meaningful > cfg.max_components: reasons.append("mask_issue"); details.append(f"{meaningful} significant disconnected components")
-    if hole_ratio > cfg.max_hole_ratio: reasons.append("mask_issue"); details.append("large internal holes in foreground")
-    if translucent > cfg.max_translucent_ratio: reasons.append("low_confidence"); details.append("unusually high translucent pixel ratio")
+    hard_reasons: list[str] = []
+    hard_details: list[str] = []
+    triggers: list[str] = []
+    trigger_details: list[str] = []
+    if ratio < cfg.min_foreground_ratio:
+        hard_reasons.append("mask_issue")
+        hard_details.append("almost empty foreground mask")
+    if ratio > cfg.max_foreground_ratio:
+        hard_reasons.append("mask_issue")
+        hard_details.append("foreground covers almost the entire image")
+    if meaningful > cfg.max_components:
+        hard_reasons.append("mask_issue")
+        hard_details.append(f"{meaningful} significant disconnected components")
+    if hole_ratio > cfg.max_hole_ratio:
+        triggers.append("large_internal_holes")
+        trigger_details.append("large internal holes in foreground")
+    if translucent > cfg.max_translucent_ratio:
+        triggers.append("high_translucency")
+        trigger_details.append("unusually high translucent pixel ratio")
     # Source-crop heuristic: ignore wide bottom contact typical for waist/bust portraits.
     top_crop = touches[0] and edge_areas[0] >= cfg.edge_min_area_ratio and spans_for_crop(fg[:band, :], 0) >= cfg.cropped_top_span_ratio
     bottom_span = spans_for_crop(fg[-band:, :], 0)
@@ -91,10 +126,12 @@ def analyze_mask(alpha: np.ndarray, cfg: QCConfig, edge: EdgeMetrics | None = No
     # Frame contact and RGB correction magnitude are telemetry, not independent
     # evidence of a bad cutout. Semantic escalation is handled after fast QC.
     # Stable order without duplicate reason codes.
-    reasons = list(dict.fromkeys(reasons))
+    hard_reasons = list(dict.fromkeys(hard_reasons))
+    triggers = list(dict.fromkeys(triggers))
+    telemetry = ["cropped_source_signal"] if cropped_source_signal else []
     return QCResult(w, h, area, ratio, meaningful, *touches, *edge_areas,
                     float(translucent), float(hole_ratio), cropped_source_signal,
-                    reasons, details)
+                    hard_reasons, hard_details, triggers, trigger_details, telemetry)
 
 
 def spans_for_crop(strip: np.ndarray, collapse_axis: int) -> float:

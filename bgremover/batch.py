@@ -19,7 +19,13 @@ from .images import atomic_save_png, discover_images, load_rgb, mask_array, rgba
 from .previews import make_contact_sheet, make_preview
 from .qc import analyze_mask
 from .reporting import read_completed, write_csv_atomic, write_json_atomic
-from .verification import HumanVerification, SAM21PersonVerifier, should_run_sam
+from .verification import (
+    HumanVerification,
+    SAM21PersonVerifier,
+    human_verification_triggers,
+    select_sam_prompt_indices,
+    should_run_sam,
+)
 
 
 @dataclass
@@ -35,7 +41,7 @@ def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes"}
 
 
-PIPELINE_SCHEMA_VERSION = 2
+PIPELINE_SCHEMA_VERSION = 3
 
 
 def pipeline_fingerprint(config: AppConfig) -> str:
@@ -107,6 +113,7 @@ class BatchProcessor:
         counts = Counter(row.get("status", "") for row in rows)
         timings = [float(row.get("processing_time", 0) or 0) for row in rows]
         sam_runs = sum(_truthy(row.get("sam_ran")) for row in rows)
+        sam_requests = sum(_truthy(row.get("sam_requested")) for row in rows)
         sam_errors = sum(bool(row.get("sam_error")) for row in rows)
         preview_items = []
         self.stop_event.clear()
@@ -153,30 +160,75 @@ class BatchProcessor:
                     raise RuntimeError("Foreground refinement changed portrait alpha")
 
                 qc = analyze_mask(alpha, self.config.qc)
-                sam_requested = should_run_sam(qc.review_reasons, human, self.config.verification)
+                semantic_triggers = human_verification_triggers(human, self.config.verification)
+                verification_triggers = list(dict.fromkeys(
+                    qc.verification_triggers + semantic_triggers
+                ))
+                prompt_indices, prompt_filter_details = select_sam_prompt_indices(
+                    human, self.config.verification
+                )
+                telemetry_signals = list(qc.telemetry_signals)
+                if human.person_detector_zero:
+                    telemetry_signals.append("person_detector_zero")
+
+                final_reasons = list(qc.hard_reasons)
+                final_details = list(qc.hard_details)
+                sam_requested = bool(
+                    not qc.hard_reasons
+                    and should_run_sam(
+                        qc.verification_triggers, human, self.config.verification
+                    )
+                )
                 sam_result = None
                 sam_error = ""
+                sam_outcome = "hard_review" if qc.hard_reasons else "not_requested"
+                if sam_requested:
+                    sam_requests += 1
                 if sam_requested and self.strong_verifier:
                     try:
                         sam_result = self.strong_verifier.verify(rgb, alpha, human)
                         if sam_result.ran:
                             sam_runs += 1
-                        if not sam_result.ran or sam_result.checked_people < sam_result.prompted_boxes:
-                            qc.review_reasons.append("low_confidence")
-                            qc.review_details.append(
+                        incomplete = (
+                            not sam_result.ran
+                            or sam_result.checked_people < sam_result.prompted_boxes
+                        )
+                        if incomplete:
+                            sam_outcome = "incomplete"
+                            final_reasons.append("low_confidence")
+                            final_details.append(
                                 "strong verification did not evaluate every requested person prompt "
                                 f"({sam_result.checked_people}/{sam_result.prompted_boxes})"
                             )
-                        qc.review_reasons.extend(sam_result.reasons)
-                        qc.review_details.extend(sam_result.details)
+                        if sam_result.reasons:
+                            if not incomplete:
+                                sam_outcome = "disagreement"
+                            final_reasons.extend(sam_result.reasons)
+                            final_details.extend(sam_result.details)
+                        elif not incomplete:
+                            sam_outcome = "confirmed"
                     except Exception as exc:
                         sam_errors += 1
                         sam_error = f"{type(exc).__name__}: {exc}"
-                        qc.review_reasons.append("low_confidence")
-                        qc.review_details.append("strong verifier failed on a suspicious result")
-                qc.review_reasons = list(dict.fromkeys(qc.review_reasons))
+                        sam_outcome = "error"
+                        final_reasons.append("low_confidence")
+                        final_details.append("strong verifier failed on a suspicious result")
+                elif sam_requested:
+                    sam_outcome = "unavailable"
+                    final_reasons.append("low_confidence")
+                    final_details.append("strong verifier is unavailable for a suspicious result")
+                elif verification_triggers and not qc.hard_reasons:
+                    # A weak signal may become READY only after complete strong
+                    # verification. Zero detections, disabled SAM, or no safe prompt
+                    # remain conservative without turning into technical FAILED.
+                    sam_outcome = "unavailable"
+                    final_reasons.append("low_confidence")
+                    final_details.append("strong verification could not be requested for a suspicious result")
 
-                status = "REVIEW" if qc.needs_review else "READY"
+                final_reasons = list(dict.fromkeys(final_reasons))
+                telemetry_signals = list(dict.fromkeys(telemetry_signals))
+
+                status = "REVIEW" if final_reasons else "READY"
                 target = base / status.lower() / relative.with_suffix(".png")
                 rgba = rgba_from_mask(refined.rgb, refined.alpha)
                 atomic_save_png(rgba, target)
@@ -193,13 +245,26 @@ class BatchProcessor:
                     person_count=human.person_count,
                     person_detector_zero=human.person_detector_zero,
                     person_box_coverage_min=(f"{min(human.coverages):.4f}" if human.coverages else ""),
+                    verification_triggers=";".join(verification_triggers),
+                    telemetry_signals=";".join(telemetry_signals),
                     sam_requested=sam_requested,
                     sam_ran=bool(sam_result and sam_result.ran),
                     sam_prompted_boxes=(sam_result.prompted_boxes if sam_result else 0),
+                    sam_filtered_boxes=(
+                        sam_result.filtered_boxes if sam_result
+                        else max(0, len(human.boxes) - len(prompt_indices))
+                    ),
                     sam_checked_people=(sam_result.checked_people if sam_result else 0),
                     sam_min_recall=(f"{sam_result.min_recall:.4f}" if sam_result and sam_result.min_recall is not None else ""),
                     sam_min_iou=(f"{sam_result.min_iou:.4f}" if sam_result and sam_result.min_iou is not None else ""),
+                    sam_filter_details="; ".join(
+                        sam_result.filter_details if sam_result else prompt_filter_details
+                    ),
+                    sam_result=sam_outcome,
                     sam_error=sam_error,
+                    final_review_reasons=";".join(final_reasons),
+                    review_reason=";".join(final_reasons),
+                    review_details="; ".join(final_details),
                     foreground_refinement=self.config.foreground.method,
                 )
             except Exception as exc:
@@ -207,6 +272,12 @@ class BatchProcessor:
                     error=f"{type(exc).__name__}: {exc}",
                     review_reason="",
                     review_details="",
+                    fast_qc_hard_reasons="",
+                    fast_qc_hard_details="",
+                    verification_triggers="",
+                    verification_trigger_details="",
+                    telemetry_signals="",
+                    final_review_reasons="",
                     width="",
                     height="",
                     foreground_ratio="",
@@ -257,6 +328,7 @@ class BatchProcessor:
             "peak_vram_gb": peak_vram,
             "p95_processing_time": float(np.percentile(timings, 95)) if timings else 0,
             "sam_runs": sam_runs,
+            "sam_requests": sam_requests,
             "sam_run_percent": (100.0 * sam_runs / len(rows)) if rows else 0.0,
             "sam_errors": sam_errors,
             "model": self.config.model.primary,
