@@ -95,6 +95,8 @@ BiRefNet содержит MIT License, но Hugging Face model card/repository
 ## Ограничения
 
 - QC и SAM — эвристическая страховка, а не ground truth; REVIEW требует человека.
+- Сильно выраженный motion blur иногда сохраняет contamination цвета исходного фона;
+  такие результаты могут потребовать ручной проверки.
 - Без уверенного SSD-Lite bbox SAM не запускается, поэтому архитектура/маленькие люди остаются
   зоной full-frame matting и численного QC.
 - Приложение не выполняет generative fill, дорисовку тела, cloud inference или hard person crop.
