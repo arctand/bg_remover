@@ -1,0 +1,48 @@
+model:
+  primary: ZhengPeng7/BiRefNet_HR-matting
+  secondary: ZhengPeng7/BiRefNet_dynamic-matting
+  primary_revision: 5d6b6f8adcb5b417c871b1d84ceaae9871355b7f
+  secondary_revision: 074df545be87034e74a96bf71566ecbbc4c15f0a
+  image_size: 2048
+  precision: fp16
+  secondary_enabled: false
+  secondary_review_only: true
+  disagreement_iou: 0.86
+  disagreement_alpha: 0.12
+qc:
+  foreground_threshold: 24
+  solid_threshold: 224
+  min_foreground_ratio: 0.015
+  max_foreground_ratio: 0.94
+  max_components: 5
+  min_component_ratio: 0.002
+  max_hole_ratio: 0.08
+  max_translucent_ratio: 0.42
+  edge_band_ratio: 0.018
+  edge_min_span_ratio: 0.08
+  edge_min_area_ratio: 0.0015
+  halo_correction_p95: 0.32
+  halo_clipped_ratio: 0.10
+  min_person_mask_coverage: 0.18
+  min_person_center_coverage: 0.30
+  person_confidence: 0.55
+  cropped_side_span_ratio: 0.18
+  cropped_top_span_ratio: 0.12
+  cropped_bottom_span_ratio: 0.28
+edge:
+  enabled: true
+  alpha_low: 8
+  alpha_high: 247
+  background_inpaint_radius: 7
+  correction_strength: 0.85
+  low_alpha_protection: 0.12
+verification:
+  enabled: true
+  model: ssdlite320_mobilenet_v3_large
+  run_on_all: true
+preview:
+  width: 1000
+  panel_height: 320
+  contact_columns: 4
+  contact_thumb_width: 300
+extensions: [.jpg, .jpeg, .png, .webp]

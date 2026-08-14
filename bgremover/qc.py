@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+
+import cv2
+import numpy as np
+
+from .config import QCConfig
+from .edge import EdgeMetrics
+from .verification import HumanVerification
+
+
+@dataclass
+class QCResult:
+    width: int
+    height: int
+    foreground_area: int
+    foreground_ratio: float
+    components: int
+    touch_top: bool
+    touch_bottom: bool
+    touch_left: bool
+    touch_right: bool
+    edge_top_ratio: float
+    edge_bottom_ratio: float
+    edge_left_ratio: float
+    edge_right_ratio: float
+    translucent_ratio: float
+    hole_ratio: float
+    review_reasons: list[str] = field(default_factory=list)
+    review_details: list[str] = field(default_factory=list)
+
+    def as_dict(self):
+        data = asdict(self)
+        data["review_reason"] = ";".join(self.review_reasons)
+        data["review_details"] = "; ".join(self.review_details)
+        data.pop("review_reasons"); data.pop("review_details")
+        return data
+
+    @property
+    def needs_review(self): return bool(self.review_reasons)
+
+
+def _edge_metrics(fg: np.ndarray, band: int, min_span: float):
+    h, w = fg.shape
+    strips = (fg[:band, :], fg[-band:, :], fg[:, :band], fg[:, -band:])
+    areas = tuple(float(s.mean()) for s in strips)
+    spans = (
+        float(np.any(strips[0], axis=0).mean()), float(np.any(strips[1], axis=0).mean()),
+        float(np.any(strips[2], axis=1).mean()), float(np.any(strips[3], axis=1).mean()),
+    )
+    touches = tuple(span >= min_span for span in spans)
+    return areas, touches
+
+
+def analyze_mask(alpha: np.ndarray, cfg: QCConfig, edge: EdgeMetrics | None = None,
+                 human: HumanVerification | None = None) -> QCResult:
+    if alpha.ndim != 2:
+        raise ValueError("Alpha mask must be a 2D array")
+    h, w = alpha.shape
+    fg = alpha >= cfg.foreground_threshold
+    area = int(fg.sum())
+    ratio = area / max(1, h * w)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(fg.astype(np.uint8), 8)
+    meaningful = sum(1 for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] / (h * w) >= cfg.min_component_ratio)
+    band = max(2, int(min(h, w) * cfg.edge_band_ratio))
+    edge_areas, touches = _edge_metrics(fg, band, cfg.edge_min_span_ratio)
+    solid = alpha >= cfg.solid_threshold
+    contours, hierarchy = cv2.findContours(solid.astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    holes = 0.0
+    if hierarchy is not None:
+        for contour, item in zip(contours, hierarchy[0]):
+            if item[3] >= 0:
+                holes += abs(cv2.contourArea(contour))
+    hole_ratio = holes / max(1, area)
+    translucent = ((alpha > cfg.foreground_threshold) & (alpha < cfg.solid_threshold)).sum() / max(1, area)
+    reasons: list[str] = []; details: list[str] = []
+    if ratio < cfg.min_foreground_ratio: reasons.append("mask_issue"); details.append("almost empty foreground mask")
+    if ratio > cfg.max_foreground_ratio: reasons.append("mask_issue"); details.append("foreground covers almost the entire image")
+    if meaningful > cfg.max_components: reasons.append("mask_issue"); details.append(f"{meaningful} significant disconnected components")
+    if hole_ratio > cfg.max_hole_ratio: reasons.append("mask_issue"); details.append("large internal holes in foreground")
+    if translucent > cfg.max_translucent_ratio: reasons.append("low_confidence"); details.append("unusually high translucent pixel ratio")
+    # Source-crop heuristic: ignore wide bottom contact typical for waist/bust portraits.
+    top_crop = touches[0] and edge_areas[0] >= cfg.edge_min_area_ratio and spans_for_crop(fg[:band, :], 0) >= cfg.cropped_top_span_ratio
+    bottom_span = spans_for_crop(fg[-band:, :], 0)
+    bottom_crop = touches[1] and edge_areas[1] >= cfg.edge_min_area_ratio and cfg.edge_min_span_ratio <= bottom_span <= cfg.cropped_bottom_span_ratio
+    left_crop = touches[2] and edge_areas[2] >= cfg.edge_min_area_ratio and spans_for_crop(fg[:, :band], 1) >= cfg.cropped_side_span_ratio
+    right_crop = touches[3] and edge_areas[3] >= cfg.edge_min_area_ratio and spans_for_crop(fg[:, -band:], 1) >= cfg.cropped_side_span_ratio
+    if top_crop or bottom_crop or left_crop or right_crop:
+        reasons.append("cropped_source"); details.append("foreground has sustained narrow contact with source frame")
+    if edge and edge.edge_pixels:
+        if edge.correction_p95 > cfg.halo_correction_p95 and edge.clipped_ratio > cfg.halo_clipped_ratio:
+            reasons.append("edge_halo"); details.append(f"strong edge color correction p95={edge.correction_p95:.3f}, clipped={edge.clipped_ratio:.3f}")
+    if human:
+        if human.missing_body_part:
+            reasons.append("missing_body_part"); details.append(f"{human.missing_count}/{human.person_count} detected people insufficiently covered by alpha")
+        if human.multiple_people_uncertain:
+            reasons.append("multiple_people_uncertain"); details.append("one or more smaller people have marginal alpha coverage")
+    # Stable order without duplicate reason codes.
+    reasons = list(dict.fromkeys(reasons))
+    return QCResult(w, h, area, ratio, meaningful, *touches, *edge_areas,
+                    float(translucent), float(hole_ratio), reasons, details)
+
+
+def spans_for_crop(strip: np.ndarray, collapse_axis: int) -> float:
+    return float(np.any(strip, axis=collapse_axis).mean())
+
+
+def mask_similarity(a: np.ndarray, b: np.ndarray, threshold: int = 127) -> tuple[float, float]:
+    af, bf = a >= threshold, b >= threshold
+    union = np.logical_or(af, bf).sum()
+    iou = float(np.logical_and(af, bf).sum() / max(1, union))
+    difference = float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean() / 255.0)
+    return iou, difference

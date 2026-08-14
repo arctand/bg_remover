@@ -1,0 +1,94 @@
+# Python environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local ML caches and downloaded/generated model weights
+.cache/
+**/.cache/
+.huggingface/
+huggingface/
+huggingface_cache/
+hf_cache/
+.torch/
+torch_cache/
+checkpoints/
+weights/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+pytorch_model*.bin
+
+# Source/production photos and local datasets
+input/
+inputs/
+photos/
+source_photos/
+production_photos/
+test_photos/
+test_images/
+datasets/
+data/raw/
+benchmark_input/
+benchmark_inputs/
+
+# Generated processing, preview, and benchmark results
+*_result/
+output/
+outputs/
+test_output/
+debug_output/
+benchmark_output/
+benchmark_outputs/
+previews/
+contact_sheet/
+
+# Keep intentionally committed lightweight test fixtures
+!tests/fixtures/
+!tests/fixtures/**
+
+# Logs, reports, and temporary files
+*.log
+*.trace
+*.tmp
+*.temp
+*.bak
+*.swp
+*.dmp
+~$*
+temp/
+tmp/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE/editor state
+.idea/
+.vscode/
+.vs/
+*.user
+*.suo
+
+# OS metadata
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
