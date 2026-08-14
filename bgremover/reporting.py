@@ -13,14 +13,22 @@ REPORT_FIELDS = [
     "touch_left", "touch_right", "cropped_source_signal", "review_reason", "review_details",
     "person_count", "person_detector_zero", "person_box_coverage_min", "sam_requested",
     "sam_ran", "sam_prompted_boxes", "sam_checked_people", "sam_min_recall", "sam_min_iou",
-    "sam_error", "foreground_refinement", "error",
+    "sam_error", "foreground_refinement", "pipeline_fingerprint", "error",
 ]
 
 
-def read_completed(path: Path) -> dict[str, dict]:
+def read_completed(path: Path, expected_fingerprint: str | None = None) -> dict[str, dict]:
     if not path.exists(): return {}
     with path.open("r", encoding="utf-8-sig", newline="") as fh:
-        return {row["source_file"]: row for row in csv.DictReader(fh) if row.get("source_file")}
+        return {
+            row["source_file"]: row
+            for row in csv.DictReader(fh)
+            if row.get("source_file")
+            and (
+                expected_fingerprint is None
+                or row.get("pipeline_fingerprint") == expected_fingerprint
+            )
+        }
 
 
 def write_csv_atomic(path: Path, rows: list[dict]) -> None:

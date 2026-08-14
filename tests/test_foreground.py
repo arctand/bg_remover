@@ -18,3 +18,14 @@ def test_pymatting_preserves_dimensions_and_alpha():
 
     assert result.rgb.size == result.alpha.size == (width, height)
     assert np.array_equal(np.asarray(result.alpha), alpha)
+
+
+def test_pymatting_preserves_opaque_foreground_rgb():
+    rng = np.random.default_rng(42)
+    rgb = rng.integers(0, 256, size=(24, 32, 3), dtype=np.uint8)
+    alpha = np.full((24, 32), 255, dtype=np.uint8)
+    result = PyMattingForegroundRefiner(ForegroundConfig()).refine(
+        Image.fromarray(rgb), Image.fromarray(alpha)
+    )
+    difference = np.abs(np.asarray(result.rgb, dtype=np.int16) - rgb.astype(np.int16))
+    assert difference.max() <= 1

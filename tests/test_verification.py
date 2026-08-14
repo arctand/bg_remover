@@ -19,3 +19,10 @@ def test_multiple_people_with_marginal_coverage_requests_verifier():
 
 def test_zero_person_detections_never_request_sam():
     assert not should_run_sam(["mask_issue"], HumanVerification(), VerificationConfig())
+
+
+def test_missing_center_signal_requests_sam_even_with_high_box_coverage():
+    human = HumanVerification(
+        person_count=1, missing_count=1, coverages=[0.8], center_coverages=[0.1]
+    )
+    assert should_run_sam([], human, VerificationConfig())

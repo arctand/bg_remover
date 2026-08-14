@@ -64,6 +64,7 @@ class VerificationConfig:
     sam_mask_confidence: float = 0.80
     sam_alpha_threshold: int = 24
     sam_trigger_box_coverage: float = 0.45
+    sam_trigger_center_coverage: float = 0.55
     sam_trigger_multiple_coverage: float = 0.60
     sam_min_person_recall: float = 0.82
     sam_min_missing_box_ratio: float = 0.02

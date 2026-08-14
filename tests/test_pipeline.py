@@ -6,11 +6,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from bgremover.batch import BatchProcessor
+from bgremover.batch import BatchProcessor, pipeline_fingerprint
 from bgremover.config import AppConfig
 from bgremover.foreground import ForegroundResult
 from bgremover.qc import analyze_mask
-from bgremover.reporting import read_completed
+from bgremover.reporting import read_completed, write_csv_atomic
 from bgremover.verification import HumanVerification, SAMVerification
 
 
@@ -173,3 +173,75 @@ def test_multiple_people_disagreement_routes_review(tmp_path):
     ).run(source, out)
     row = read_completed(out / "report.csv")["x.jpg"]
     assert "multiple_people_uncertain" in row["review_reason"]
+
+
+def test_suspicious_case_with_no_checked_sam_prompt_routes_review(tmp_path):
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    human = HumanVerification(
+        person_count=1, missing_count=1, boxes=[(5, 5, 75, 75)], scores=[0.99],
+        coverages=[0.1], center_coverages=[0.1],
+    )
+    incomplete = SAMVerification(ran=True, prompted_boxes=1, checked_people=0)
+    out = tmp_path / "out"
+    BatchProcessor(
+        AppConfig(), FakeBackend(), verifier=FakePersonVerifier(human),
+        foreground_refiner=FakeRefiner(), strong_verifier=FakeStrongVerifier(incomplete),
+    ).run(source, out)
+    row = read_completed(out / "report.csv")["x.jpg"]
+    assert row["status"] == "REVIEW" and "low_confidence" in row["review_reason"]
+
+
+def test_legacy_report_is_reprocessed_by_new_pipeline(tmp_path):
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    out = tmp_path / "out"
+    write_csv_atomic(out / "report.csv", [{
+        "source_file": "x.jpg", "status": "READY", "processing_time": "0.1",
+        "output_file": "ready/x.png",
+    }])
+    backend = FakeBackend(); backend.calls = 0
+    original_predict = backend.predict
+    def counted(image):
+        backend.calls += 1
+        return original_predict(image)
+    backend.predict = counted
+    BatchProcessor(AppConfig(), backend, foreground_refiner=FakeRefiner()).run(source, out, resume=True)
+    assert backend.calls == 1
+    assert read_completed(out / "report.csv")["x.jpg"]["pipeline_fingerprint"]
+
+
+def test_resume_reprocesses_row_when_output_is_missing(tmp_path):
+    cfg = AppConfig()
+    source = tmp_path / "in"; source.mkdir(); Image.new("RGB", (80, 80)).save(source / "x.jpg")
+    out = tmp_path / "out"
+    write_csv_atomic(out / "report.csv", [{
+        "source_file": "x.jpg", "status": "READY", "processing_time": "0.1",
+        "output_file": "ready/x.png", "pipeline_fingerprint": pipeline_fingerprint(cfg),
+    }])
+    backend = FakeBackend(); backend.calls = 0
+    original_predict = backend.predict
+    def counted(image):
+        backend.calls += 1
+        return original_predict(image)
+    backend.predict = counted
+    BatchProcessor(cfg, backend, foreground_refiner=FakeRefiner()).run(source, out, resume=True)
+    assert backend.calls == 1
+
+
+def test_always_on_models_load_once_per_batch(tmp_path):
+    class LoadCountingBackend(FakeBackend):
+        def __init__(self): self.model, self.loads = None, 0
+        def load(self): self.loads += 1; self.model = object(); return self
+    class LoadCountingVerifier(FakePersonVerifier):
+        def __init__(self):
+            super().__init__(HumanVerification())
+            self.model, self.loads = None, 0
+        def load(self): self.loads += 1; self.model = object(); return self
+
+    source = tmp_path / "in"; source.mkdir()
+    for index in range(3): Image.new("RGB", (40, 40)).save(source / f"{index}.jpg")
+    backend, verifier = LoadCountingBackend(), LoadCountingVerifier()
+    BatchProcessor(
+        AppConfig(), backend, verifier=verifier, foreground_refiner=FakeRefiner(),
+        strong_verifier=FakeStrongVerifier(),
+    ).run(source, tmp_path / "out")
+    assert backend.loads == verifier.loads == 1

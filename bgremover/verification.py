@@ -97,7 +97,11 @@ def should_run_sam(
         return False
     if any(reason in {"mask_issue", "low_confidence"} for reason in qc_reasons):
         return True
+    if human.missing_count > 0:
+        return True
     if any(value < config.sam_trigger_box_coverage for value in human.coverages):
+        return True
+    if any(value < config.sam_trigger_center_coverage for value in human.center_coverages):
         return True
     if human.person_count > 1 and any(
         value < config.sam_trigger_multiple_coverage for value in human.coverages

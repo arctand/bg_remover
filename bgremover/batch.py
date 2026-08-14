@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import statistics
 import threading
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -31,6 +33,23 @@ class Progress:
 
 def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes"}
+
+
+PIPELINE_SCHEMA_VERSION = 2
+
+
+def pipeline_fingerprint(config: AppConfig) -> str:
+    """Identify every setting that can change a saved processing decision."""
+
+    payload = {
+        "schema": PIPELINE_SCHEMA_VERSION,
+        "model": asdict(config.model),
+        "qc": asdict(config.qc),
+        "foreground": asdict(config.foreground),
+        "verification": asdict(config.verification),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class BatchProcessor:
@@ -76,7 +95,13 @@ class BatchProcessor:
             (base / folder).mkdir(parents=True, exist_ok=True)
         if test:
             (base / "previews").mkdir(parents=True, exist_ok=True)
-        completed = read_completed(report_path) if resume else {}
+        fingerprint = pipeline_fingerprint(self.config)
+        completed = read_completed(report_path, fingerprint) if resume else {}
+        completed = {
+            key: row for key, row in completed.items()
+            if row.get("status") == "FAILED"
+            or (row.get("output_file") and (base / row["output_file"]).is_file())
+        }
         rows = list(completed.values())
         done = set(completed)
         counts = Counter(row.get("status", "") for row in rows)
@@ -136,9 +161,12 @@ class BatchProcessor:
                         sam_result = self.strong_verifier.verify(rgb, alpha, human)
                         if sam_result.ran:
                             sam_runs += 1
-                        if not sam_result.ran:
+                        if not sam_result.ran or sam_result.checked_people < sam_result.prompted_boxes:
                             qc.review_reasons.append("low_confidence")
-                            qc.review_details.append("strong verification was requested but no high-confidence prompt was available")
+                            qc.review_details.append(
+                                "strong verification did not evaluate every requested person prompt "
+                                f"({sam_result.checked_people}/{sam_result.prompted_boxes})"
+                            )
                         qc.review_reasons.extend(sam_result.reasons)
                         qc.review_details.extend(sam_result.details)
                     except Exception as exc:
@@ -199,6 +227,7 @@ class BatchProcessor:
                 processing_time=f"{elapsed:.4f}",
                 device=getattr(info, "name", "test"),
                 precision=getattr(info, "precision", "test"),
+                pipeline_fingerprint=fingerprint,
                 error=row.get("error", ""),
             )
             rows.append(row)
@@ -233,6 +262,7 @@ class BatchProcessor:
             "model": self.config.model.primary,
             "model_revision": self.config.model.primary_revision,
             "foreground_refinement": self.config.foreground.method,
+            "pipeline_fingerprint": fingerprint,
             "device": getattr(getattr(self.primary, "info", None), "name", "test"),
             "precision": getattr(getattr(self.primary, "info", None), "precision", "test"),
         }
