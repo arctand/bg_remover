@@ -1,0 +1,59 @@
+paths:
+  source: ../BGCRUSHER_TEST_PHOTOS
+  output: benchmark_output
+
+runtime:
+  device: cuda
+  precision: fp16
+  count: 20
+  extensions: [.jpg, .jpeg, .png, .webp]
+
+models:
+  hr_matting:
+    model_id: ZhengPeng7/BiRefNet_HR-matting
+    revision: 5d6b6f8adcb5b417c871b1d84ceaae9871355b7f
+    image_size: 2048
+  portrait:
+    model_id: ZhengPeng7/BiRefNet-portrait
+    revision: ecdeb6240ef23557dbd48ff27c59c1a88cbcb755
+    image_size: 1024
+  dynamic_matting:
+    model_id: ZhengPeng7/BiRefNet_dynamic-matting
+    revision: 074df545be87034e74a96bf71566ecbbc4c15f0a
+    image_size: 2048
+
+person_guidance:
+  enabled: true
+  base_model: hr_matting
+  detector: ssdlite320_mobilenet_v3_large
+  box_margin_ratio: 0.08
+
+verifiers:
+  ssdlite_confidence: 0.55
+  sam21:
+    model_id: facebook/sam2.1-hiera-small
+    revision: ee5bba1d82bb8749febdf90f45e84b687142ba03
+
+refinement:
+  mask_variant: hr_matting
+  official_radius: 90
+  methods: [raw_rgb, current_edge, birefnet_official, pymatting_ml]
+
+preview:
+  panel_width: 300
+  panel_height: 300
+  contact_columns: 2
+
+regressions:
+  02_person: motorcycle retention
+  03_person: false positive cropped_source
+  04_person: hair / old background color
+  06_person: damaged or partially missing person
+  10_person: basket / carried object retention
+  11_person: false positive cropped_source
+  12_person: strong halo
+  13_person: architecture retention
+  14_person: hair / old background color
+  16_person: hair / old background color
+  17_person: false positive cropped_source
+  18_person: hair / old background color
