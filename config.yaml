@@ -36,6 +36,23 @@ edge:
 foreground:
   method: pymatting_ml
   enabled: true
+artifacts:
+  enabled: true
+  analysis_max_size: 512
+  normal_search_radius: 14
+  residual_weak_score: 0.35
+  loose_edge_weak_score: 0.45
+  local_signal_weak_score: 0.85
+  hard_residual_score: 0.65
+  hard_residual_max_score: 0.90
+  hard_loose_edge_score: 0.60
+  hard_loose_edge_max_score: 0.90
+  hard_combined_score: 0.55
+  hard_combined_max_score: 0.85
+  hard_local_agreement_score: 0.45
+  hard_local_agreement_max_score: 0.90
+  hard_structural_score: 0.90
+  min_edge_pixels: 48
 verification:
   enabled: true
   model: ssdlite320_mobilenet_v3_large

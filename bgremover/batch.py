@@ -13,6 +13,7 @@ from typing import Callable
 
 import numpy as np
 
+from .artifacts import analyze_artifacts
 from .config import AppConfig
 from .foreground import PyMattingForegroundRefiner
 from .images import atomic_save_png, discover_images, load_rgb, mask_array, rgba_from_mask
@@ -41,7 +42,7 @@ def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes"}
 
 
-PIPELINE_SCHEMA_VERSION = 3
+PIPELINE_SCHEMA_VERSION = 4
 
 
 def pipeline_fingerprint(config: AppConfig) -> str:
@@ -52,6 +53,7 @@ def pipeline_fingerprint(config: AppConfig) -> str:
         "model": asdict(config.model),
         "qc": asdict(config.qc),
         "foreground": asdict(config.foreground),
+        "artifacts": asdict(config.artifacts),
         "verification": asdict(config.verification),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -159,6 +161,14 @@ class BatchProcessor:
                 if not np.array_equal(mask_array(refined.alpha), alpha):
                     raise RuntimeError("Foreground refinement changed portrait alpha")
 
+                rgba = rgba_from_mask(refined.rgb, refined.alpha)
+                artifact = analyze_artifacts(
+                    rgb,
+                    rgba,
+                    self.config.artifacts,
+                    semantic_relevant=(human.person_count > 0) if self.verifier else None,
+                )
+
                 qc = analyze_mask(alpha, self.config.qc)
                 semantic_triggers = human_verification_triggers(human, self.config.verification)
                 verification_triggers = list(dict.fromkeys(
@@ -168,20 +178,24 @@ class BatchProcessor:
                     human, self.config.verification
                 )
                 telemetry_signals = list(qc.telemetry_signals)
+                telemetry_signals.extend(artifact.telemetry_signals)
+                telemetry_signals.extend(f"artifact:{item}" for item in artifact.weak_triggers)
                 if human.person_detector_zero:
                     telemetry_signals.append("person_detector_zero")
 
                 final_reasons = list(qc.hard_reasons)
                 final_details = list(qc.hard_details)
+                final_reasons.extend(artifact.hard_reasons)
+                final_details.extend(artifact.hard_details)
                 sam_requested = bool(
-                    not qc.hard_reasons
+                    not final_reasons
                     and should_run_sam(
                         qc.verification_triggers, human, self.config.verification
                     )
                 )
                 sam_result = None
                 sam_error = ""
-                sam_outcome = "hard_review" if qc.hard_reasons else "not_requested"
+                sam_outcome = "hard_review" if final_reasons else "not_requested"
                 if sam_requested:
                     sam_requests += 1
                 if sam_requested and self.strong_verifier:
@@ -217,7 +231,7 @@ class BatchProcessor:
                     sam_outcome = "unavailable"
                     final_reasons.append("low_confidence")
                     final_details.append("strong verifier is unavailable for a suspicious result")
-                elif verification_triggers and not qc.hard_reasons:
+                elif verification_triggers and not final_reasons:
                     # A weak signal may become READY only after complete strong
                     # verification. Zero detections, disabled SAM, or no safe prompt
                     # remain conservative without turning into technical FAILED.
@@ -230,15 +244,15 @@ class BatchProcessor:
 
                 status = "REVIEW" if final_reasons else "READY"
                 target = base / status.lower() / relative.with_suffix(".png")
-                rgba = rgba_from_mask(refined.rgb, refined.alpha)
                 atomic_save_png(rgba, target)
                 output = target.relative_to(base).as_posix()
                 if test:
                     preview = base / "previews" / relative.with_suffix(".png")
-                    make_preview(rgb, rgba, preview, self.config.preview)
+                    make_preview(rgb, rgba, preview, self.config.preview, artifact)
                     preview_items.append((preview, key, status.lower()))
 
                 row.update(qc.as_dict())
+                row.update(artifact.as_dict())
                 row.update(
                     width=rgb.width,
                     height=rgb.height,

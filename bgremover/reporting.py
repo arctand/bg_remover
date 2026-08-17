@@ -17,6 +17,14 @@ REPORT_FIELDS = [
     "person_count", "person_detector_zero", "person_box_coverage_min", "sam_requested",
     "sam_ran", "sam_prompted_boxes", "sam_filtered_boxes", "sam_checked_people",
     "sam_min_recall", "sam_min_iou", "sam_filter_details", "sam_result", "sam_error",
+    "artifact_residual_background_score", "artifact_chromatic_background_score",
+    "artifact_neutral_background_score", "artifact_loose_edge_score",
+    "artifact_compact_damage_score", "artifact_weak_hair_edge_score",
+    "artifact_local_alpha_instability_score", "artifact_semantic_edge_anomaly_score",
+    "artifact_local_agreement_score",
+    "artifact_total_score", "artifact_edge_pixels", "artifact_severity", "artifact_flags",
+    "artifact_hard_reasons", "artifact_hard_details", "artifact_weak_triggers",
+    "artifact_telemetry",
     "foreground_refinement", "pipeline_fingerprint", "error",
 ]
 

@@ -80,6 +80,26 @@ class ForegroundConfig:
 
 
 @dataclass
+class ArtifactConfig:
+    enabled: bool = True
+    analysis_max_size: int = 512
+    normal_search_radius: int = 14
+    residual_weak_score: float = 0.35
+    loose_edge_weak_score: float = 0.45
+    local_signal_weak_score: float = 0.85
+    hard_residual_score: float = 0.65
+    hard_residual_max_score: float = 0.90
+    hard_loose_edge_score: float = 0.60
+    hard_loose_edge_max_score: float = 0.90
+    hard_combined_score: float = 0.55
+    hard_combined_max_score: float = 0.85
+    hard_local_agreement_score: float = 0.45
+    hard_local_agreement_max_score: float = 0.90
+    hard_structural_score: float = 0.90
+    min_edge_pixels: int = 48
+
+
+@dataclass
 class PreviewConfig:
     width: int = 1000
     panel_height: int = 320
@@ -94,6 +114,7 @@ class AppConfig:
     preview: PreviewConfig = field(default_factory=PreviewConfig)
     edge: EdgeConfig = field(default_factory=EdgeConfig)
     foreground: ForegroundConfig = field(default_factory=ForegroundConfig)
+    artifacts: ArtifactConfig = field(default_factory=ArtifactConfig)
     verification: VerificationConfig = field(default_factory=VerificationConfig)
     extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".webp")
 
@@ -115,6 +136,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     _merge(cfg.preview, raw.get("preview", {}))
     _merge(cfg.edge, raw.get("edge", {}))
     _merge(cfg.foreground, raw.get("foreground", {}))
+    _merge(cfg.artifacts, raw.get("artifacts", {}))
     _merge(cfg.verification, raw.get("verification", {}))
     if "extensions" in raw:
         cfg.extensions = tuple(e.lower() for e in raw["extensions"])

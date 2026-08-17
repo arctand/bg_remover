@@ -7,6 +7,11 @@ from PIL import Image, ImageDraw, ImageFont
 from .config import PreviewConfig
 from .images import atomic_save_png
 
+try:
+    from .artifacts import ArtifactResult
+except ImportError:  # pragma: no cover - keeps the preview module independently usable
+    ArtifactResult = object  # type: ignore[misc,assignment]
+
 
 def _fit(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     copy = image.copy(); copy.thumbnail(size, Image.Resampling.LANCZOS)
@@ -20,8 +25,21 @@ def _composite(rgba: Image.Image, color) -> Image.Image:
     return Image.alpha_composite(bg, rgba).convert("RGB")
 
 
-def make_preview(original: Image.Image, rgba: Image.Image, path: Path, cfg: PreviewConfig):
-    panel_w, panel_h = cfg.width // 5, cfg.panel_height
+def _artifact_overlay(original: Image.Image, artifact: ArtifactResult | None) -> Image.Image:
+    base = original.convert("RGB")
+    heatmap = getattr(artifact, "heatmap", None) if artifact is not None else None
+    if heatmap is None:
+        return base
+    heat = Image.fromarray((heatmap * 255).clip(0, 255).astype("uint8"))
+    heat = heat.resize(base.size, Image.Resampling.BILINEAR)
+    color = Image.new("RGB", base.size, "#ff2b59")
+    return Image.composite(color, base, heat.point(lambda value: round(value * 0.72)))
+
+
+def make_preview(original: Image.Image, rgba: Image.Image, path: Path, cfg: PreviewConfig,
+                 artifact: ArtifactResult | None = None):
+    panel_count = 6 if artifact is not None else 5
+    panel_w, panel_h = cfg.width // panel_count, cfg.panel_height
     contrast = Image.new("RGB", rgba.size, "#ff00a8")
     block = max(16, min(rgba.size) // 12)
     draw_contrast = ImageDraw.Draw(contrast)
@@ -37,7 +55,10 @@ def make_preview(original: Image.Image, rgba: Image.Image, path: Path, cfg: Prev
         Image.alpha_composite(contrast.convert("RGBA"), rgba).convert("RGB"),
     ]
     labels = ["Original", "White", "Gray", "Black", "Contrast"]
-    canvas = Image.new("RGB", (panel_w * 5, panel_h + 32), "#202124")
+    if artifact is not None:
+        panels.append(_artifact_overlay(original, artifact))
+        labels.append(f"Artifact: {artifact.severity}")
+    canvas = Image.new("RGB", (panel_w * panel_count, panel_h + 32), "#202124")
     draw = ImageDraw.Draw(canvas)
     for i, (panel, label) in enumerate(zip(panels, labels)):
         fitted = _fit(panel, (panel_w, panel_h)).convert("RGB")
