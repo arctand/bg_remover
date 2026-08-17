@@ -72,13 +72,14 @@ A fresh full pipeline run produced `18 READY / 2 REVIEW / 0 FAILED`.
 | --- | --- | --- |
 | `04_person` | no flag (telemetry only) | READY |
 | `12_person` | hard: residual `0.7208`, loose `0.6667`, local agreement `0.4630` | REVIEW: `edge_artifact` |
-| `14_person` | weak `loose_edge_noise` | READY |
+| `14_person` | weak neutral residual + loose + semantic anomaly | READY |
 | `16_person` | weak residual + loose + semantic anomaly | READY |
-| `18_person` | weak `loose_edge_noise` | READY |
+| `18_person` | weak neutral residual + loose + semantic anomaly | READY |
 | `19_person` | weak artifact evidence | existing semantic REVIEW preserved |
 
-`11_person`, a visually good ordinary portrait, had no artifact flag. Other
-standalone colour/hair observations stayed telemetry and did not change status.
+`11_person`, a visually good ordinary portrait, had only a conservative neutral
+residual telemetry flag and no weak/hard decision. Other standalone colour/hair
+observations also stayed telemetry and did not change status.
 The required `12_person` decision is based only on image/alpha measurements; no
 filename or case-specific rule exists.
 
